@@ -41,6 +41,7 @@ function VoiceAgentInner({ agentId }: { agentId: string }) {
   const { userAudioAmplitude, agentAudioAmplitude, status } = useLayercodeAgent({
     agentId,
     authorizeSessionEndpoint: '/api/authorize',
+    _websocketUrl:'wss://api-staging.layercode.com/v1/agents/web/websocket'
   });
 
   // Transcript state (placeholder until wired to messages)
