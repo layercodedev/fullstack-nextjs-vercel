@@ -28,9 +28,7 @@ export default function VoiceAgent() {
             <span className="text-sm tracking-widest uppercase text-neutral-400">Layercode Voice Agent</span>
           </div>
         </div>
-        <div className="rounded-md border border-red-900/50 bg-red-950/40 text-red-300 p-4">
-          Error: NEXT_PUBLIC_LAYERCODE_AGENT_ID is not set.
-        </div>
+        <div className="rounded-md border border-red-900/50 bg-red-950/40 text-red-300 p-4">Error: NEXT_PUBLIC_LAYERCODE_AGENT_ID is not set.</div>
       </div>
     );
   }
@@ -41,7 +39,7 @@ function VoiceAgentInner({ agentId }: { agentId: string }) {
   const { userAudioAmplitude, agentAudioAmplitude, status } = useLayercodeAgent({
     agentId,
     authorizeSessionEndpoint: '/api/authorize',
-    _websocketUrl:'wss://api-staging.layercode.com/v1/agents/web/websocket'
+    _websocketUrl: 'wss://api-staging.layercode.com/v1/agents/web/websocket'
   });
 
   // Transcript state (placeholder until wired to messages)
@@ -50,7 +48,8 @@ function VoiceAgentInner({ agentId }: { agentId: string }) {
   const [vadStatus] = useState<'idle' | 'speech' | 'silence' | 'failed'>('idle');
   const userTurnIndex = useRef<Record<string, number>>({});
   const assistantTurnIndex = useRef<Record<string, number>>({});
-  void userTurnIndex; void assistantTurnIndex;
+  void userTurnIndex;
+  void assistantTurnIndex;
 
   const userAccent = useMemo(() => '#9B62FF', []);
   const assistantAccent = useMemo(() => '#9B62FF', []);
@@ -67,11 +66,7 @@ function VoiceAgentInner({ agentId }: { agentId: string }) {
           <span className="text-xs uppercase tracking-wider text-neutral-400">Turn</span>
           <span
             className={`px-2 py-1 rounded border text-[11px] uppercase tracking-wider ${
-              turn === 'assistant'
-                ? 'border-cyan-700 text-cyan-300'
-                : turn === 'user'
-                  ? 'border-emerald-700 text-emerald-300'
-                  : 'border-neutral-700 text-gray-400'
+              turn === 'assistant' ? 'border-cyan-700 text-cyan-300' : turn === 'user' ? 'border-emerald-700 text-emerald-300' : 'border-neutral-700 text-gray-400'
             }`}
           >
             {turn}
@@ -104,13 +99,7 @@ function VoiceAgentInner({ agentId }: { agentId: string }) {
                 >
                   <span
                     className={`w-2 h-2 rounded-full ${
-                      vadStatus === 'speech'
-                        ? 'bg-emerald-400'
-                        : vadStatus === 'silence'
-                          ? 'bg-gray-500'
-                          : vadStatus === 'failed'
-                            ? 'bg-red-500'
-                            : 'bg-gray-700'
+                      vadStatus === 'speech' ? 'bg-emerald-400' : vadStatus === 'silence' ? 'bg-gray-500' : vadStatus === 'failed' ? 'bg-red-500' : 'bg-gray-700'
                     }`}
                   />
                   {vadStatus}
