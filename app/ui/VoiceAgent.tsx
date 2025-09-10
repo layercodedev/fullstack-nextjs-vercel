@@ -1,13 +1,12 @@
 'use client';
 
 import { useLayercodeAgent } from '@layercode/react-sdk';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import SpectrumVisualizer from './SpectrumVisualizer';
-import { ConnectionStatusIndicator } from './ConnectionStatusIndicator';
-import { MicrophoneButton } from './MicrophoneButton';
+import { useEffect, useRef, useState } from 'react';
 import TranscriptConsole from './TranscriptConsole';
 import PromptPane from './PromptPane';
-import { WebhookLogsLink } from './WebhookLogsLink';
+import { HeaderBar } from './HeaderBar';
+import SpectrumVisualizer from './SpectrumVisualizer';
+import { MicrophoneButton } from './MicrophoneButton';
 
 type Entry = { role: string; text: string; ts: number; turnId?: string };
 
@@ -36,120 +35,138 @@ export default function VoiceAgent() {
 }
 
 function VoiceAgentInner({ agentId }: { agentId: string }) {
-  const { userAudioAmplitude, agentAudioAmplitude, status } = useLayercodeAgent({
-    agentId,
-    authorizeSessionEndpoint: '/api/authorize',
-    onMessage(message) {
-      console.log('Agent message:', message);
-    },
-    _websocketUrl: 'wss://api-staging.layercode.com/v1/agents/web/websocket'
-  });
-
-  // Transcript state (placeholder until wired to messages)
-  const [entries] = useState<Entry[]>([]);
-  const [turn] = useState<'idle' | 'user' | 'assistant'>('idle');
-  const [vadStatus] = useState<'idle' | 'speech' | 'silence' | 'failed'>('idle');
+  // Transcript and signal state
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [turn, setTurn] = useState<'idle' | 'user' | 'assistant'>('idle');
   const userTurnIndex = useRef<Record<string, number>>({});
   const assistantTurnIndex = useRef<Record<string, number>>({});
-  void userTurnIndex;
-  void assistantTurnIndex;
 
-  const userAccent = useMemo(() => '#9B62FF', []);
-  const assistantAccent = useMemo(() => '#9B62FF', []);
+  // Helper to upsert streaming text into entries
+  function upsertStreamingEntry(params: { role: 'user' | 'assistant'; turnId?: string; text: string; replace?: boolean }) {
+    const { role, turnId, text, replace } = params;
+    if (!turnId) {
+      // No turn id, just append as a standalone entry
+      setEntries(prev => [...prev, { role, text, ts: Date.now() }]);
+      return;
+    }
+
+    const indexMap = role === 'user' ? userTurnIndex.current : assistantTurnIndex.current;
+    const existingIndex = indexMap[turnId];
+    if (existingIndex === undefined) {
+      setEntries(prev => {
+        const nextIndex = prev.length;
+        indexMap[turnId] = nextIndex;
+        return [...prev, { role, text, ts: Date.now(), turnId }];
+      });
+    } else {
+      setEntries(prev => {
+        const copy = prev.slice();
+        const current = copy[existingIndex];
+        copy[existingIndex] = {
+          ...current,
+          text: replace ? text : current.text + text,
+        };
+        return copy;
+      });
+    }
+  }
+
+  const { userAudioAmplitude, agentAudioAmplitude, status, mute, unmute, isMuted } = useLayercodeAgent({
+    agentId,
+    authorizeSessionEndpoint: '/api/authorize',
+    _websocketUrl: 'wss://api-staging.layercode.com/v1/agents/web/websocket',
+    onMuteStateChange(isMuted) {
+      setEntries(prev => [...prev, { role: 'data', text: `MIC → ${isMuted ? 'muted' : 'unmuted'}`, ts: Date.now() }]);
+    },
+    onMessage: (data: any) => {
+      // Expected event shapes include:
+      // - { type: 'turn.start', role: 'user' | 'assistant' }
+      // - { type: 'user.transcript.delta', content: string, turn_id: string }
+      // - { type: 'user.transcript', content: string, turn_id: string }
+      // - { type: 'response.text', content: string, turn_id: string }
+      // - { type: 'response.completed', turn_id: string }
+      // - { type: 'vad_events', event: 'vad_start' | 'vad_end' | 'failed' }
+
+      const ts = Date.now();
+      switch (data?.type) {
+        case 'turn.start': {
+          if (data.role === 'user' || data.role === 'assistant') {
+            setTurn(data.role);
+            // Optional: log turn change as a data entry for visibility
+            setEntries(prev => [...prev, { role: 'data', text: `TURN → ${data.role}`, ts }]);
+          }
+          break;
+        }
+        case 'user.transcript.delta': {
+          upsertStreamingEntry({ role: 'user', turnId: data.turn_id, text: data.content ?? '' });
+          break;
+        }
+        case 'user.transcript': {
+          // Final transcript for the user; replace accumulated text to ensure correctness
+          upsertStreamingEntry({ role: 'user', turnId: data.turn_id, text: data.content ?? '', replace: true });
+          // After user finishes talking, VAD likely ended; keep vadStatus updates driven by vad_events
+          break;
+        }
+        case 'response.text': {
+          upsertStreamingEntry({ role: 'assistant', turnId: data.turn_id, text: data.content ?? '' });
+          break;
+        }
+        case 'response.completed': {
+          // Assistant finished speaking
+          setTurn('idle');
+          break;
+        }
+        default: {
+          // Fallback: log unknown events as data entries for visibility
+          if (data) {
+            try {
+              const summary = typeof data === 'string' ? data : JSON.stringify(data);
+              setEntries(prev => [...prev, { role: 'data', text: summary, ts }]);
+            } catch {
+              setEntries(prev => [...prev, { role: 'data', text: '[unserializable event]', ts }]);
+            }
+          }
+          break;
+        }
+      }
+    }
+  });
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <span className="text-sm tracking-widest uppercase text-neutral-400">Layercode Voice Agent</span>
-          <span className="text-neutral-700">/</span>
-          <ConnectionStatusIndicator status={status} />
+    <div className="max-w-6xl mx-auto px-4 py-6 space-y-6 overflow-x-hidden">
+      <HeaderBar agentId={agentId} status={status} turn={turn} />
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 min-w-0">
+        <div className="hidden md:block rounded-md border border-neutral-800 bg-neutral-950/60 p-4">
+          <SpectrumVisualizer label="User" amplitude={userAudioAmplitude} />
+          {/* <p className="mt-2 text-[11px] leading-5 text-neutral-400">16-bit PCM audio data • 8000 Hz • Mono</p> */}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs uppercase tracking-wider text-neutral-400">Turn</span>
-          <span
-            className={`px-2 py-1 rounded border text-[11px] uppercase tracking-wider ${
-              turn === 'assistant' ? 'border-cyan-700 text-cyan-300' : turn === 'user' ? 'border-emerald-700 text-emerald-300' : 'border-neutral-700 text-gray-400'
-            }`}
-          >
-            {turn}
-          </span>
-        </div>
-      </div>
-
-      <div className="rounded-md border border-neutral-800 bg-neutral-950/60 overflow-hidden shadow-[0_0_0_1px_rgba(255,255,255,0.03)_inset]">
-        <div className="grid grid-cols-12">
-          <div className="col-span-6 border-r border-neutral-800">
-            <div className="px-4 py-2 border-b border-neutral-800 text-xs uppercase tracking-wider text-neutral-400">Transcript</div>
-            <TranscriptConsole entries={entries} />
-          </div>
-
-          <div className="col-span-3 border-r border-neutral-800">
-            <div className="px-4 py-2 border-b border-neutral-800 text-xs uppercase tracking-wider text-neutral-400">Signal</div>
-            <div className="p-4 space-y-6">
-              <div>
-                <div className="text-xs uppercase tracking-wider text-neutral-400 mb-2">VAD</div>
-                <div
-                  className={`inline-flex items-center gap-2 px-2 py-1 rounded border text-[11px] uppercase tracking-wider ${
-                    vadStatus === 'speech'
-                      ? 'border-emerald-700 text-emerald-300'
-                      : vadStatus === 'silence'
-                        ? 'border-neutral-700 text-gray-400'
-                        : vadStatus === 'failed'
-                          ? 'border-red-700 text-red-300'
-                          : 'border-neutral-800 text-gray-500'
-                  }`}
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      vadStatus === 'speech' ? 'bg-emerald-400' : vadStatus === 'silence' ? 'bg-gray-500' : vadStatus === 'failed' ? 'bg-red-500' : 'bg-gray-700'
-                    }`}
-                  />
-                  {vadStatus}
-                </div>
-              </div>
-
-              <div>
-                <SpectrumVisualizer label="Mic Input" amplitude={userAudioAmplitude} accent={userAccent} />
-                <ul className="mt-2 text-[11px] leading-5 text-neutral-400">
-                  <li>16-bit PCM audio data</li>
-                  <li>8000 Hz sample rate</li>
-                  <li>Mono channel</li>
-                </ul>
-              </div>
-              <div>
-                <SpectrumVisualizer label="Assistant Output" amplitude={agentAudioAmplitude} accent={assistantAccent} />
-                <ul className="mt-2 text-[11px] leading-5 text-neutral-400">
-                  <li>16-bit PCM audio data</li>
-                  <li>16000 Hz sample rate</li>
-                  <li>Mono channel</li>
-                </ul>
-              </div>
-
-              <div className="pt-2">
-                <div className="flex items-center justify-center">
-                  <div className="relative">
-                    <div className="absolute inset-0 blur-md rounded-full" style={{ boxShadow: '0 0 24px #9B62FF55' }} />
-                    <div className="relative flex items-center gap-3 rounded-full border border-neutral-800/80 bg-neutral-950/50 px-4 py-2">
-                      <span className="text-xs text-neutral-400 uppercase tracking-wider">Mic</span>
-                      <div className="w-10 h-10 rounded-full bg-neutral-900 text-brand-purple flex items-center justify-center border border-neutral-800">
-                        <MicrophoneButton />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+        <div className="flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <MicrophoneButton
+              isMuted={isMuted}
+              onToggle={() => {
+                if (isMuted) unmute();
+                else mute();
+              }}
+            />
+            <div className={`text-[11px] uppercase tracking-wider ${isMuted ? 'text-red-300' : 'text-neutral-400'}`}>
+              {isMuted ? 'Muted' : 'Live'}
             </div>
           </div>
-
-          <div className="col-span-3">
-            <PromptPane />
-          </div>
+        </div>
+        <div className="hidden md:block rounded-md border border-neutral-800 bg-neutral-950/60 p-4">
+          <SpectrumVisualizer label="Agent" amplitude={agentAudioAmplitude} />
+          {/* <p className="mt-2 text-[11px] leading-5 text-neutral-400">16-bit PCM audio data • 16000 Hz • Mono</p> */}
         </div>
       </div>
 
-      <div className="mt-4 flex justify-end">
-        <WebhookLogsLink status={status} agentId={agentId} />
+      <div className="rounded-md border border-neutral-800 overflow-hidden w-full max-w-full min-w-0">
+        <TranscriptConsole entries={entries} />
+      </div>
+
+      <div className="rounded-md border border-neutral-800 overflow-hidden w-full max-w-full min-w-0">
+        <PromptPane />
       </div>
     </div>
   );
