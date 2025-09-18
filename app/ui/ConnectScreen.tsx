@@ -1,22 +1,26 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { HeaderBar } from './HeaderBar';
+
+const VoiceAgent = dynamic(() => import('./VoiceAgent'), { ssr: false });
 
 type ConnectScreenProps = {
   agentId?: string;
 };
 
 export function ConnectScreen({ agentId }: ConnectScreenProps) {
-  const router = useRouter();
-  const [isNavigating, setIsNavigating] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   const hasAgentId = Boolean(agentId);
+
+  if (isConnected) {
+    return <VoiceAgent onDisconnect={() => setIsConnected(false)} />;
+  }
 
   function handleConnect() {
     if (!hasAgentId) return;
-    setIsNavigating(true);
-    router.push('/agent');
+    setIsConnected(true);
   }
 
   return (
@@ -31,14 +35,14 @@ export function ConnectScreen({ agentId }: ConnectScreenProps) {
         <button
           type="button"
           onClick={handleConnect}
-          disabled={!hasAgentId || isNavigating}
+          disabled={!hasAgentId}
           className={`px-6 py-3 rounded-md text-sm font-medium uppercase tracking-wider transition-colors border ${
             !hasAgentId
               ? 'border-neutral-800 text-neutral-600 bg-neutral-900 cursor-not-allowed'
               : 'border-violet-600 bg-violet-600/60 text-white hover:bg-violet-500/70 hover:border-violet-500'
           }`}
         >
-          {isNavigating ? 'Connecting…' : hasAgentId ? 'Connect' : 'Missing agent id'}
+          {hasAgentId ? 'Connect' : 'Missing agent id'}
         </button>
         {!hasAgentId ? (
           <p className="text-xs text-neutral-500 max-w-sm">
