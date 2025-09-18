@@ -10,7 +10,11 @@ import { MicrophoneButton } from './MicrophoneButton';
 
 type Entry = { role: string; text: string; ts: number; turnId?: string };
 
-export default function VoiceAgent() {
+type VoiceAgentProps = {
+  onDisconnect?: () => void;
+};
+
+export default function VoiceAgent({ onDisconnect }: VoiceAgentProps = {}) {
   const agentId = process.env.NEXT_PUBLIC_LAYERCODE_AGENT_ID;
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -31,40 +35,67 @@ export default function VoiceAgent() {
       </div>
     );
   }
-  return <VoiceAgentInner agentId={agentId} />;
+  return <VoiceAgentInner agentId={agentId} onDisconnect={onDisconnect} />;
 }
 
-function VoiceAgentInner({ agentId }: { agentId: string }) {
+function VoiceAgentInner({ agentId, onDisconnect }: { agentId: string; onDisconnect?: () => void }) {
   // Transcript and signal state
   const [entries, setEntries] = useState<Entry[]>([]);
   const [turn, setTurn] = useState<'idle' | 'user' | 'assistant'>('idle');
+  const [userSpeaking, setUserSpeaking] = useState(false);
   const userTurnIndex = useRef<Record<string, number>>({});
   const assistantTurnIndex = useRef<Record<string, number>>({});
+  const notifyRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    // Prepare notification audio element
+    const a = new Audio('/notify1.wav');
+    a.preload = 'auto';
+    a.volume = 0.8;
+    notifyRef.current = a;
+    return () => {
+      if (notifyRef.current) {
+        // best-effort cleanup
+        notifyRef.current.pause();
+        notifyRef.current.src = '';
+        notifyRef.current = null;
+      }
+    };
+  }, []);
+
+  function playNotify() {
+    const a = notifyRef.current;
+    if (!a) return;
+    try {
+      a.currentTime = 0;
+      a.play().catch(() => {});
+    } catch {}
+  }
 
   // Helper to upsert streaming text into entries
   function upsertStreamingEntry(params: { role: 'user' | 'assistant'; turnId?: string; text: string; replace?: boolean }) {
     const { role, turnId, text, replace } = params;
     if (!turnId) {
       // No turn id, just append as a standalone entry
-      setEntries(prev => [...prev, { role, text, ts: Date.now() }]);
+      setEntries((prev) => [...prev, { role, text, ts: Date.now() }]);
       return;
     }
 
     const indexMap = role === 'user' ? userTurnIndex.current : assistantTurnIndex.current;
     const existingIndex = indexMap[turnId];
     if (existingIndex === undefined) {
-      setEntries(prev => {
+      setEntries((prev) => {
         const nextIndex = prev.length;
         indexMap[turnId] = nextIndex;
         return [...prev, { role, text, ts: Date.now(), turnId }];
       });
     } else {
-      setEntries(prev => {
+      setEntries((prev) => {
         const copy = prev.slice();
         const current = copy[existingIndex];
         copy[existingIndex] = {
           ...current,
-          text: replace ? text : current.text + text,
+          text: replace ? text : current.text + text
         };
         return copy;
       });
@@ -74,88 +105,90 @@ function VoiceAgentInner({ agentId }: { agentId: string }) {
   const { userAudioAmplitude, agentAudioAmplitude, status, mute, unmute, isMuted } = useLayercodeAgent({
     agentId,
     authorizeSessionEndpoint: '/api/authorize',
+    _websocketUrl: 'wss://api-staging.layercode.com/v1/agents/web/websocket',
     onMuteStateChange(isMuted) {
-      setEntries(prev => [...prev, { role: 'data', text: `MIC → ${isMuted ? 'muted' : 'unmuted'}`, ts: Date.now() }]);
+      setEntries((prev) => [...prev, { role: 'data', text: `MIC → ${isMuted ? 'muted' : 'unmuted'}`, ts: Date.now() }]);
     },
     onMessage: (data: any) => {
-      // Expected event shapes include:
-      // - { type: 'turn.start', role: 'user' | 'assistant' }
-      // - { type: 'user.transcript.delta', content: string, turn_id: string }
-      // - { type: 'user.transcript', content: string, turn_id: string }
-      // - { type: 'response.text', content: string, turn_id: string }
-      // - { type: 'response.completed', turn_id: string }
-      // - { type: 'vad_events', event: 'vad_start' | 'vad_end' | 'failed' }
-
+      console.log(data);
       const ts = Date.now();
       switch (data?.type) {
         case 'turn.start': {
-          if (data.role === 'user' || data.role === 'assistant') {
-            setTurn(data.role);
-            // Optional: log turn change as a data entry for visibility
-            setEntries(prev => [...prev, { role: 'data', text: `TURN → ${data.role}`, ts }]);
+          setTurn(data.role);
+          if (data.role == 'assistant') {
+            playNotify();
           }
+          // Optional: log turn change as a data entry for visibility
+          // setEntries((prev) => [...prev, { role: 'data', text: `TURN → ${data.role}`, ts }]);
+          break;
+        }
+        case 'vad_events': {
+          setUserSpeaking(data.event == 'vad_start');
           break;
         }
         case 'user.transcript.delta': {
           upsertStreamingEntry({ role: 'user', turnId: data.turn_id, text: data.content ?? '' });
           break;
         }
-        case 'user.transcript': {
-          // Final transcript for the user; replace accumulated text to ensure correctness
-          upsertStreamingEntry({ role: 'user', turnId: data.turn_id, text: data.content ?? '', replace: true });
-          // After user finishes talking, VAD likely ended; keep vadStatus updates driven by vad_events
-          break;
-        }
         case 'response.text': {
           upsertStreamingEntry({ role: 'assistant', turnId: data.turn_id, text: data.content ?? '' });
           break;
         }
-        case 'response.completed': {
-          // Assistant finished speaking
-          setTurn('idle');
-          break;
-        }
-        default: {
-          // Fallback: log unknown events as data entries for visibility
-          if (data) {
-            try {
-              const summary = typeof data === 'string' ? data : JSON.stringify(data);
-              setEntries(prev => [...prev, { role: 'data', text: summary, ts }]);
-            } catch {
-              setEntries(prev => [...prev, { role: 'data', text: '[unserializable event]', ts }]);
-            }
-          }
-          break;
-        }
+        // default: {
+        //   // Fallback: log unknown events as data entries for visibility
+        //   if (data) {
+        //     try {
+        //       const summary = typeof data === 'string' ? data : JSON.stringify(data);
+        //       setEntries((prev) => [...prev, { role: 'data', text: summary, ts }]);
+        //     } catch {
+        //       setEntries((prev) => [...prev, { role: 'data', text: '[unserializable event]', ts }]);
+        //     }
+        //   }
+        //   break;
+        // }
       }
     }
   });
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-6 overflow-x-hidden">
-      <HeaderBar agentId={agentId} status={status} turn={turn} />
+      <HeaderBar
+        agentId={agentId}
+        status={status}
+        turn={turn}
+        actionSlot={
+          onDisconnect ? (
+            <button
+              type="button"
+              onClick={onDisconnect}
+              className="px-3 py-1.5 rounded border border-gray-700/70 bg-gray-900/20 text-[11px] uppercase tracking-wider text-gray-200 hover:text-white hover:border-gray-500 transition-colors"
+            >
+              End Session
+            </button>
+          ) : null
+        }
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 min-w-0">
         <div className="hidden md:block rounded-md border border-neutral-800 bg-neutral-950/60 p-4">
-          <SpectrumVisualizer label="User" amplitude={userAudioAmplitude} />
+          <SpectrumVisualizer label="User" amplitude={userAudioAmplitude * 2} accent="#C4B5FD" />
           {/* <p className="mt-2 text-[11px] leading-5 text-neutral-400">16-bit PCM audio data • 8000 Hz • Mono</p> */}
         </div>
         <div className="flex items-center justify-center">
           <div className="flex flex-col items-center gap-3">
             <MicrophoneButton
               isMuted={isMuted}
+              userSpeaking={userSpeaking}
               onToggle={() => {
                 if (isMuted) unmute();
                 else mute();
               }}
             />
-            <div className={`text-[11px] uppercase tracking-wider ${isMuted ? 'text-red-300' : 'text-neutral-400'}`}>
-              {isMuted ? 'Muted' : 'Live'}
-            </div>
+            <div className={`text-[11px] uppercase tracking-wider ${isMuted ? 'text-red-300' : 'text-neutral-400'}`}>{isMuted ? 'Muted' : 'Live'}</div>
           </div>
         </div>
         <div className="hidden md:block rounded-md border border-neutral-800 bg-neutral-950/60 p-4">
-          <SpectrumVisualizer label="Agent" amplitude={agentAudioAmplitude} />
+          <SpectrumVisualizer label="Agent" amplitude={agentAudioAmplitude} accent="#67E8F9" />
           {/* <p className="mt-2 text-[11px] leading-5 text-neutral-400">16-bit PCM audio data • 16000 Hz • Mono</p> */}
         </div>
       </div>
