@@ -1,14 +1,14 @@
 'use client';
 
 import { useLayercodeAgent } from '@layercode/react-sdk';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { usePlayNotify } from '../utils/usePlayNotify';
+import { updateMessages, type ConversationEntry } from '../utils/updateMessages';
 import TranscriptConsole from './TranscriptConsole';
 import PromptPane from './PromptPane';
 import { HeaderBar } from './HeaderBar';
 import SpectrumVisualizer from './SpectrumVisualizer';
 import { MicrophoneButton } from './MicrophoneButton';
-
-type Entry = { role: string; text: string; ts: number; turnId?: string };
 
 type VoiceAgentProps = {
   onDisconnect?: () => void;
@@ -40,77 +40,19 @@ export default function VoiceAgent({ onDisconnect }: VoiceAgentProps = {}) {
 
 function VoiceAgentInner({ agentId, onDisconnect }: { agentId: string; onDisconnect?: () => void }) {
   // Transcript and signal state
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [messages, setMessages] = useState<ConversationEntry[]>([]);
   const [turn, setTurn] = useState<'idle' | 'user' | 'assistant'>('idle');
   const [userSpeaking, setUserSpeaking] = useState(false);
-  const userTurnIndex = useRef<Record<string, number>>({});
-  const assistantTurnIndex = useRef<Record<string, number>>({});
-  const notifyRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    // Prepare notification audio element
-    const a = new Audio('/notify1.wav');
-    a.preload = 'auto';
-    a.volume = 0.8;
-    notifyRef.current = a;
-    return () => {
-      if (notifyRef.current) {
-        // best-effort cleanup
-        notifyRef.current.pause();
-        notifyRef.current.src = '';
-        notifyRef.current = null;
-      }
-    };
-  }, []);
-
-  function playNotify() {
-    const a = notifyRef.current;
-    if (!a) return;
-    try {
-      a.currentTime = 0;
-      a.play().catch(() => {});
-    } catch {}
-  }
-
-  // Helper to upsert streaming text into entries
-  function upsertStreamingEntry(params: { role: 'user' | 'assistant'; turnId?: string; text: string; replace?: boolean }) {
-    const { role, turnId, text, replace } = params;
-    if (!turnId) {
-      // No turn id, just append as a standalone entry
-      setEntries((prev) => [...prev, { role, text, ts: Date.now() }]);
-      return;
-    }
-
-    const indexMap = role === 'user' ? userTurnIndex.current : assistantTurnIndex.current;
-    const existingIndex = indexMap[turnId];
-    if (existingIndex === undefined) {
-      setEntries((prev) => {
-        const nextIndex = prev.length;
-        indexMap[turnId] = nextIndex;
-        return [...prev, { role, text, ts: Date.now(), turnId }];
-      });
-    } else {
-      setEntries((prev) => {
-        const copy = prev.slice();
-        const current = copy[existingIndex];
-        copy[existingIndex] = {
-          ...current,
-          text: replace ? text : current.text + text
-        };
-        return copy;
-      });
-    }
-  }
+  const playNotify = usePlayNotify('/notify1.wav', { volume: 0.8 });
 
   const { userAudioAmplitude, agentAudioAmplitude, status, mute, unmute, isMuted } = useLayercodeAgent({
     agentId,
     authorizeSessionEndpoint: '/api/authorize',
     onMuteStateChange(isMuted) {
-      setEntries((prev) => [...prev, { role: 'data', text: `MIC → ${isMuted ? 'muted' : 'unmuted'}`, ts: Date.now() }]);
+      setMessages((prev) => [...prev, { role: 'data', text: `MIC → ${isMuted ? 'muted' : 'unmuted'}`, ts: Date.now() }]);
     },
     onMessage: (data: any) => {
       console.log(data);
-      const ts = Date.now();
       switch (data?.type) {
         case 'turn.start': {
           setTurn(data.role);
@@ -118,7 +60,7 @@ function VoiceAgentInner({ agentId, onDisconnect }: { agentId: string; onDisconn
             playNotify();
           }
           // Optional: log turn change as a data entry for visibility
-          // setEntries((prev) => [...prev, { role: 'data', text: `TURN → ${data.role}`, ts }]);
+          // setMessages((prev) => [...prev, { role: 'data', text: `TURN → ${data.role}`, ts: Date.now() }]);
           break;
         }
         case 'vad_events': {
@@ -126,11 +68,21 @@ function VoiceAgentInner({ agentId, onDisconnect }: { agentId: string; onDisconn
           break;
         }
         case 'user.transcript.delta': {
-          upsertStreamingEntry({ role: 'user', turnId: data.turn_id, text: data.content ?? '' });
+          updateMessages({
+            role: 'user',
+            turnId: data.turn_id,
+            text: data.content ?? '',
+            setMessages
+          });
           break;
         }
         case 'response.text': {
-          upsertStreamingEntry({ role: 'assistant', turnId: data.turn_id, text: data.content ?? '' });
+          updateMessages({
+            role: 'assistant',
+            turnId: data.turn_id,
+            text: data.content ?? '',
+            setMessages
+          });
           break;
         }
         // default: {
@@ -138,9 +90,9 @@ function VoiceAgentInner({ agentId, onDisconnect }: { agentId: string; onDisconn
         //   if (data) {
         //     try {
         //       const summary = typeof data === 'string' ? data : JSON.stringify(data);
-        //       setEntries((prev) => [...prev, { role: 'data', text: summary, ts }]);
+        //       setMessages((prev) => [...prev, { role: 'data', text: summary, ts: Date.now() }]);
         //     } catch {
-        //       setEntries((prev) => [...prev, { role: 'data', text: '[unserializable event]', ts }]);
+        //       setMessages((prev) => [...prev, { role: 'data', text: '[unserializable event]', ts: Date.now() }]);
         //     }
         //   }
         //   break;
@@ -193,7 +145,7 @@ function VoiceAgentInner({ agentId, onDisconnect }: { agentId: string; onDisconn
       </div>
 
       <div className="rounded-md border border-neutral-800 overflow-hidden w-full max-w-full min-w-0">
-        <TranscriptConsole entries={entries} />
+        <TranscriptConsole entries={messages} />
       </div>
 
       <div className="rounded-md border border-neutral-800 overflow-hidden w-full max-w-full min-w-0">
