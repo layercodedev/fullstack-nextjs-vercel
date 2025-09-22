@@ -33,7 +33,7 @@ export function updateMessages({ role, turnId, text, replace, setMessages }: Upd
 
     copy[existingIndex] = {
       ...current,
-      text: replace ? text : current.text + ' ' + text
+      text: replace ? text : current.text + text
     };
 
     return copy;
