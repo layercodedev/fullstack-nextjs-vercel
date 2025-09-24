@@ -1,9 +1,9 @@
 'use client';
 
 import { useLayercodeAgent } from '@layercode/react-sdk';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePlayNotify } from '../utils/usePlayNotify';
-import { updateMessages, type ConversationEntry } from '../utils/updateMessages';
+import { handleUserTranscriptDelta, updateMessages, type ConversationEntry, type TranscriptCache } from '../utils/updateMessages';
 import { HeaderBar } from './HeaderBar';
 import { MicrophoneButton } from './MicrophoneButton';
 import PromptPane from './PromptPane';
@@ -17,6 +17,7 @@ export default function VoiceAgent() {
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const playNotify = usePlayNotify('/notify1.wav', { volume: 0.8 });
+  const userTranscriptChunksRef = useRef<TranscriptCache>(new Map());
 
   const { connect, disconnect, userAudioAmplitude, agentAudioAmplitude, status, mute, unmute, isMuted } = useLayercodeAgent({
     agentId,
@@ -38,11 +39,17 @@ export default function VoiceAgent() {
           setUserSpeaking(data.event === 'vad_start');
           break;
         }
+        case 'turn.end': {
+          if (data.turn_id) {
+            userTranscriptChunksRef.current.delete(data.turn_id as string);
+          }
+          break;
+        }
+        case 'user.transcript.interim_delta':
         case 'user.transcript.delta': {
-          updateMessages({
-            role: 'user',
-            turnId: data.turn_id,
-            text: data.content ?? '',
+          handleUserTranscriptDelta({
+            message: data,
+            cache: userTranscriptChunksRef.current,
             setMessages
           });
           break;
@@ -74,6 +81,7 @@ export default function VoiceAgent() {
     try {
       await connect();
       setMessages([]);
+      userTranscriptChunksRef.current.clear();
       setTurn('idle');
       setUserSpeaking(false);
       setIsConnected(true);

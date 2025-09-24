@@ -1,15 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from 'react';
+import type { ConversationEntry } from '../utils/updateMessages';
 
-type Entry = {
-  role: string;
-  text: string;
-  ts: number;
-  turnId?: string;
-};
-
-export default function TranscriptConsole({ entries }: { entries: Entry[] }) {
+export default function TranscriptConsole({ entries }: { entries: ConversationEntry[] }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -25,7 +19,7 @@ export default function TranscriptConsole({ entries }: { entries: Entry[] }) {
       </div>
       <ul className="divide-y divide-neutral-800">
         {entries.map((e, i) => (
-          <li key={i} className="px-4 py-3 md:grid md:grid-cols-12 items-start">
+          <li key={e.turnId ? `${e.turnId}-${e.role}` : `${e.ts}-${i}`} className="px-4 py-3 md:grid md:grid-cols-12 items-start">
             <div className="md:col-span-2 pr-3 text-[11px] text-neutral-500 tabular-nums">{new Date(e.ts).toLocaleTimeString([], { hour12: false })}</div>
             <div className="md:col-span-2 pr-3 mt-1 md:mt-0">
               <span
@@ -37,7 +31,13 @@ export default function TranscriptConsole({ entries }: { entries: Entry[] }) {
               </span>
             </div>
             <div className={`md:col-span-8 text-sm leading-relaxed text-neutral-200 whitespace-pre-wrap break-words mt-1 md:mt-0 ${e.role === 'data' ? 'font-mono text-[12px] text-neutral-300' : ''}`}>
-              {e.text}
+              {e.role === 'user' && e.chunks?.length
+                ? e.chunks.map((chunk) => (
+                    <span key={chunk.counter} data-delta-counter={chunk.counter} className="inline whitespace-pre-wrap">
+                      {chunk.text}
+                    </span>
+                  ))
+                : e.text}
               {e.turnId ? <div className="mt-1 text-[11px] text-neutral-500">turn_id: {e.turnId}</div> : null}
             </div>
           </li>
