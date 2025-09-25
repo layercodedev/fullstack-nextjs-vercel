@@ -45,8 +45,31 @@ export default function VoiceAgent() {
           }
           break;
         }
-        case 'user.transcript.interim_delta':
+        case 'user.transcript.interim_delta': {
+          handleUserTranscriptDelta({
+            message: data,
+            cache: userTranscriptChunksRef.current,
+            setMessages
+          });
+          break;
+        }
         case 'user.transcript.delta': {
+          const hasDeltaCounter = data?.delta_counter !== undefined && data?.delta_counter !== null;
+
+          if (!hasDeltaCounter && data?.turn_id) {
+            userTranscriptChunksRef.current.delete(data.turn_id as string);
+          }
+
+          if (!hasDeltaCounter) {
+            updateMessages({
+              role: 'user',
+              turnId: data.turn_id,
+              text: typeof data?.content === 'string' ? data.content : '',
+              setMessages
+            });
+            break;
+          }
+
           handleUserTranscriptDelta({
             message: data,
             cache: userTranscriptChunksRef.current,
