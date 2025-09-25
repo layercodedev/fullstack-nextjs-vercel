@@ -8,7 +8,6 @@ export const POST = async (request: Request) => {
   if (!apiKey) throw new Error('LAYERCODE_API_KEY is not set.');
 
   const requestBody = await request.json();
-  if (!requestBody?.agent_id) throw new Error('Missing agent_id in request body.');
 
   const response = await fetch(endpoint, {
     method: 'POST',
