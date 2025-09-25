@@ -1,3 +1,5 @@
+'use client';
+
 import SpectrumVisualizer from './SpectrumVisualizer';
 import { MicrophoneButton } from './MicrophoneButton';
 import { useMemo } from 'react';
