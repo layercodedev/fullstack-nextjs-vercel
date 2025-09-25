@@ -84,37 +84,21 @@ export function handleUserTranscriptDelta({ message, cache, setMessages }: Handl
         : undefined;
   const deltaCounter =
     typeof deltaCounterValue === 'number' && Number.isFinite(deltaCounterValue) ? deltaCounterValue : undefined;
-  const messageType = typeof message.type === 'string' ? message.type : undefined;
   const content = typeof message.content === 'string' ? message.content : '';
 
-  if (!turnId) {
+  if (!turnId || deltaCounter === undefined) {
+    if (turnId) {
+      cache.delete(turnId);
+    }
+
     updateMessages({
       role: 'user',
       turnId,
       text: content,
+      replace: true,
       chunks: [],
       setMessages
     });
-    return;
-  }
-
-  if (deltaCounter === undefined) {
-    cache.delete(turnId);
-
-    const shouldConcatWithoutCounter = messageType === 'user.transcript.delta';
-    const updateArgs: UpdateMessagesArgs = {
-      role: 'user',
-      turnId,
-      text: content,
-      setMessages
-    };
-
-    if (!shouldConcatWithoutCounter) {
-      updateArgs.replace = true;
-      updateArgs.chunks = [];
-    }
-
-    updateMessages(updateArgs);
     return;
   }
 
