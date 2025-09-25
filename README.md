@@ -41,6 +41,6 @@ By default, Vercel blocks external requests to your application /api routes. Thi
 
 Disable Vercel Authentication by going to your project settings in the Vercel dashboard, then go to "Deployment Protection" in left sidebar menu, then turn off "Vercel Authentication" and Save. You do not need to redeploy.
 
-![disable-vercel-auth](./public/disable-vercel-auth.png)
+![disable-vercel-auth](./disable-vercel-auth.png)
 
 Remember to check your Webhook Logs in the Layercode dashboard to ensure that webhooks are being received successfully. If you receive a 405 error response to webhooks, this indicates that Vercel Authentication is still enabled.
