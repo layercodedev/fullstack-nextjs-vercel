@@ -73,7 +73,11 @@ export function SignalPanel({
             <div className="absolute inset-0 blur-md rounded-full" style={{ boxShadow: '0 0 24px #9B62FF55' }} />
             <div className="relative flex flex-col items-center gap-3 rounded-xl border border-neutral-800/80 bg-neutral-950/50 px-6 py-4">
               <span className="text-xs text-neutral-400 uppercase tracking-wider">Microphone</span>
-              <MicrophoneButton isMuted={isMuted} onToggle={onToggleMute} />
+              <MicrophoneButton
+                isMuted={isMuted}
+                userIsSpeaking={vadStatus === 'speech'}
+                onToggleAction={onToggleMute}
+              />
               <div className={`text-[11px] uppercase tracking-wider ${isMuted ? 'text-red-300' : 'text-neutral-400'}`}>{isMuted ? 'Muted' : 'Live'}</div>
             </div>
           </div>
@@ -82,5 +86,3 @@ export function SignalPanel({
     </div>
   );
 }
-
-

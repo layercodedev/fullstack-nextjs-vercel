@@ -146,8 +146,8 @@ export default function VoiceAgent() {
           <div className="flex flex-col items-center gap-3">
             <MicrophoneButton
               isMuted={isMuted}
-              userSpeaking={userSpeaking}
-              onToggle={() => {
+              userIsSpeaking={userSpeaking}
+              onToggleAction={() => {
                 if (isMuted) unmute();
                 else mute();
               }}
