@@ -16,10 +16,11 @@
     "@layercode/node-server-sdk": "^1.2.1",
     "@layercode/react-sdk": "^2.1.6",
     "@opennextjs/cloudflare": "^1.9.0",
-    "ai": "^5.0.39",
+    "ai": "^5.0.54",
     "next": "^15.5.4",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
