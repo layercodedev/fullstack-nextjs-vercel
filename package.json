@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -17,7 +17,7 @@
     "@layercode/react-sdk": "^2.1.6",
     "@opennextjs/cloudflare": "^1.9.0",
     "ai": "^5.0.39",
-    "next": "15.6.0-canary.29",
+    "next": "^15.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
