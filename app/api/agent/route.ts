@@ -1,7 +1,8 @@
 export const dynamic = 'force-dynamic';
 
 import { createOpenAI } from '@ai-sdk/openai';
-import { streamText, ModelMessage } from 'ai';
+import { streamText, ModelMessage, tool, stepCountIs } from 'ai';
+import z from 'zod';
 import { streamResponse, verifySignature } from '@layercode/node-server-sdk';
 import { prettyPrintMsgs } from '@/app/utils/msgs';
 import config from '@/layercode.config.json';
@@ -68,12 +69,25 @@ export const POST = async (request: Request) => {
 
       // Before generating a response, we store a placeholder assistant msg in the history. This is so that if the agent response is interrupted (which is common for voice agents), before we have the chance to save our agent's response, our conversation history will still follow the correct user-assistant turn order.
       const assistantResposneIdx = conversations[conversation_id].push({ role: 'assistant', turn_id, content: '' });
-
       return streamResponse(requestBody, async ({ stream }) => {
+        const weather = tool({
+          description: 'Get the weather in a location',
+          inputSchema: z.object({
+            location: z.string().describe('The location to get the weather for')
+          }),
+          execute: async ({ location }) => ({
+            location,
+            temperature: 72 + Math.floor(Math.random() * 21) - 10
+          })
+        });
+
         const { textStream } = streamText({
           model: openai('gpt-4o-mini'),
           system: SYSTEM_PROMPT,
           messages: conversations[conversation_id], // The user message has already been added to the conversation array earlier, so the LLM will be responding to that.
+          tools: { weather },
+          toolChoice: 'auto',
+          stopWhen: stepCountIs(10),
           onFinish: async ({ response }) => {
             // The assistant has finished generating the full response text. Now we update our conversation history with the additional messages generated. For a simple LLM generated single agent response, there will be one additional message. If you add some tools, and allow multi-step agent mode, there could be multiple additional messages which all need to be added to the conversation history.
 
