@@ -75,12 +75,17 @@ export const POST = async (request: Request) => {
           inputSchema: z.object({
             location: z.string().describe('The location to get the weather for')
           }),
-          execute: async ({ location }) => ({
-            location,
-            temperature: 72 + Math.floor(Math.random() * 21) - 10
-          })
-        });
+          execute: async ({ location }) => {
+            stream.data({ isThinking: true });
+            // do something to get the weather
+            stream.data({ isThinking: false });
 
+            return {
+              location,
+              temperature: 72 + Math.floor(Math.random() * 21) - 10
+            };
+          }
+        });
         const { textStream } = streamText({
           model: openai('gpt-4o-mini'),
           system: SYSTEM_PROMPT,

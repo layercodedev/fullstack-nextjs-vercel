@@ -6,7 +6,7 @@ import { WebhookLogsLink } from './WebhookLogsLink';
 
 type TurnState = 'idle' | 'user' | 'assistant';
 
-export function HeaderBar({ agentId, status, turn, actionSlot }: { agentId: string; status: string; turn: TurnState; actionSlot?: ReactNode }) {
+export function HeaderBar({ agentId, status, turn, actionSlot, isThinking }: { agentId: string; status: string; turn: TurnState; actionSlot?: ReactNode; isThinking: boolean }) {
   const [copied, setCopied] = useState(false);
   function copyAgentId() {
     if (navigator?.clipboard) {
@@ -63,7 +63,7 @@ export function HeaderBar({ agentId, status, turn, actionSlot }: { agentId: stri
               turn === 'assistant' ? 'border-cyan-700 text-cyan-300' : turn === 'user' ? 'border-violet-700 text-violet-300' : 'border-neutral-700 text-gray-400'
             }`}
           >
-            {turn === 'assistant' ? 'Agent' : turn}
+            {isThinking ? 'thinking..' : turn === 'assistant' ? 'Agent' : turn}
           </span>
         </div>
       </div>

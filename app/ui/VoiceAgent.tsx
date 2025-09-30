@@ -16,8 +16,15 @@ export default function VoiceAgent() {
   const [turn, setTurn] = useState<'idle' | 'user' | 'assistant'>('idle');
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const playNotify = usePlayNotify('/notify1.wav', { volume: 0.8 });
   const userTranscriptChunksRef = useRef<TranscriptCache>(new Map());
+
+  type DataMessage = {
+    content: {
+      isThinking: boolean;
+    };
+  };
 
   const { connect, disconnect, userAudioAmplitude, agentAudioAmplitude, status, mute, unmute, isMuted } = useLayercodeAgent({
     agentId,
@@ -64,7 +71,8 @@ export default function VoiceAgent() {
           break;
         }
       }
-    }
+    },
+    onDataMessage: (data: DataMessage) => setIsThinking(data.content.isThinking)
   });
 
   useEffect(() => {
@@ -97,7 +105,7 @@ export default function VoiceAgent() {
   if (!isConnected) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6 overflow-x-hidden">
-        <HeaderBar agentId={agentId} status={status} turn={turn} />
+        <HeaderBar agentId={agentId} status={status} turn={turn} isThinking={isThinking} />
 
         <div className="rounded-md border border-neutral-800 bg-neutral-950/60 h-[70vh] flex flex-col justify-center items-center gap-6 text-center">
           <div className="space-y-2">
@@ -127,6 +135,7 @@ export default function VoiceAgent() {
         agentId={agentId}
         status={status}
         turn={turn}
+        isThinking={isThinking}
         actionSlot={
           <button
             type="button"
