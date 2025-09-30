@@ -3,18 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^2.0.27",
-    "@layercode/node-server-sdk": "^1.2.1",
-    "@layercode/react-sdk": "^2.1.6",
-    "ai": "^5.0.39",
-    "next": "^15.5.4",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "next": "^15.5.4",
+    "@ai-sdk/openai": "^2.0.27",
+    "ai": "^5.0.39",
+    "@layercode/node-server-sdk": "^1.2.1",
+    "@layercode/react-sdk": "^2.1.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -22,6 +22,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "ai": "^5.0.54",
+    "zod": "^4.1.11"
   }
 }
