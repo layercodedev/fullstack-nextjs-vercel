@@ -1,3 +1,4 @@
+export const maxDuration = 300; // We set a generous Vercel max function duration to allow for long running agents
 export const dynamic = 'force-dynamic';
 
 import { createOpenAI } from '@ai-sdk/openai';
