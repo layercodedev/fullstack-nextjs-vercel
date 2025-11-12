@@ -4,7 +4,6 @@ import { createOpenAI } from "@ai-sdk/openai";
 import {
   streamText,
   UIMessage,
-  Tool,
   convertToModelMessages,
   AssistantModelMessage,
 } from "ai";
@@ -19,11 +18,7 @@ type LayercodePart = {
   content: string;
 };
 
-type MyTools = {
-  someTool: Tool<any, any>;
-};
-
-type LayercodeUIMessage = UIMessage<LayercodeMetadata, LayercodePart, MyTools>;
+type LayercodeUIMessage = UIMessage<LayercodeMetadata, LayercodePart>;
 
 type WebhookRequest = {
   conversation_id: string;
