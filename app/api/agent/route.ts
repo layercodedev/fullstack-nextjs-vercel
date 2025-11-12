@@ -1,123 +1,121 @@
-export const maxDuration = 300; // We set a generous Vercel max function duration to allow for long running agents
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-import { createOpenAI } from '@ai-sdk/openai';
-import { streamText, ModelMessage, tool, stepCountIs } from 'ai';
-import z from 'zod';
-import { streamResponse, verifySignature } from '@layercode/node-server-sdk';
-import { prettyPrintMsgs } from '@/app/utils/msgs';
-import config from '@/layercode.config.json';
+import { createOpenAI } from "@ai-sdk/openai";
+import {
+  streamText,
+  UIMessage,
+  Tool,
+  convertToModelMessages,
+  AssistantModelMessage,
+} from "ai";
+import { streamResponse, verifySignature } from "@layercode/node-server-sdk";
+import config from "@/layercode.config.json";
 
-export type MessageWithTurnId = ModelMessage & { turn_id: string };
+type LayercodeMetadata = {
+  conversation_id: string;
+};
+
+type LayercodePart = {
+  content: string;
+};
+
+type MyTools = {
+  someTool: Tool<any, any>;
+};
+
+type LayercodeUIMessage = UIMessage<LayercodeMetadata, LayercodePart, MyTools>;
+
 type WebhookRequest = {
   conversation_id: string;
   text: string;
   turn_id: string;
-  interruption_context?: {
-    previous_turn_interrupted: boolean;
-    words_heard: number;
-    text_heard: string;
-    assistant_turn_id?: string;
-  };
-  type: 'message' | 'session.start' | 'session.update' | 'session.end';
+  type: "message" | "session.start" | "session.end" | "session.update";
 };
 
 const SYSTEM_PROMPT = config.prompt;
 const WELCOME_MESSAGE = config.welcome_message;
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-
-// In production we recommend fast datastore like Redis or Cloudflare D1 for storing conversation history
-// Here we use a simple in-memory object for demo purposes
-const conversations = {} as Record<string, MessageWithTurnId[]>;
+const conversations = {} as Record<string, LayercodeUIMessage[]>;
 
 export const POST = async (request: Request) => {
   const requestBody = (await request.json()) as WebhookRequest;
-  console.log('Webhook received from Layercode', requestBody);
+  console.log("Webhook received from Layercode", requestBody);
 
-  // Verify this webhook request is from Layercode
-  const signature = request.headers.get('layercode-signature') || '';
-  const secret = process.env.LAYERCODE_WEBHOOK_SECRET || '';
+  // Verify webhook signature
+  const signature = request.headers.get("layercode-signature") || "";
+  const secret = process.env.LAYERCODE_WEBHOOK_SECRET || "";
   const isValid = verifySignature({
     payload: JSON.stringify(requestBody),
     signature,
-    secret
+    secret,
   });
-  if (!isValid) return new Response('Invalid layercode-signature', { status: 401 });
+  if (!isValid)
+    return new Response("Invalid layercode-signature", { status: 401 });
 
-  const { conversation_id, text: userText, turn_id, type, interruption_context } = requestBody;
+  const { conversation_id, text: userText, turn_id, type } = requestBody;
 
-  // If this is a new conversation, create a new array to hold messages
-  if (!conversations[conversation_id]) {
-    conversations[conversation_id] = [];
-  }
+  if (!conversations[conversation_id]) conversations[conversation_id] = [];
 
-  // Immediately store the user message received
-  conversations[conversation_id].push({ role: 'user', turn_id, content: userText });
+  const userMessage: LayercodeUIMessage = {
+    id: turn_id,
+    role: "user",
+    metadata: { conversation_id },
+    parts: [{ type: "text", text: userText }],
+  };
+  conversations[conversation_id].push(userMessage);
 
   switch (type) {
-    case 'session.start':
-      // A new session/call has started. If you want to send a welcome message (have the agent speak first), return that here.
+    case "session.start":
+      const message: LayercodeUIMessage = {
+        id: turn_id,
+        role: "assistant",
+        metadata: { conversation_id },
+        parts: [{ type: "text", text: WELCOME_MESSAGE }],
+      };
+
       return streamResponse(requestBody, async ({ stream }) => {
-        // Save the welcome message to the conversation history
-        conversations[conversation_id].push({ role: 'assistant', turn_id, content: WELCOME_MESSAGE });
-        // Send the welcome message to be spoken
+        conversations[conversation_id].push(message);
         stream.tts(WELCOME_MESSAGE);
         stream.end();
       });
-    case 'message':
-      // The user has spoken and the transcript has been received. Call our LLM and genereate a response.
 
-      // Before generating a response, we store a placeholder assistant msg in the history. This is so that if the agent response is interrupted (which is common for voice agents), before we have the chance to save our agent's response, our conversation history will still follow the correct user-assistant turn order.
-      const assistantResposneIdx = conversations[conversation_id].push({ role: 'assistant', turn_id, content: '' });
+    case "message":
       return streamResponse(requestBody, async ({ stream }) => {
-        const weather = tool({
-          description: 'Get the weather in a location',
-          inputSchema: z.object({
-            location: z.string().describe('The location to get the weather for')
-          }),
-          execute: async ({ location }) => {
-            stream.data({ isThinking: true });
-            // do something to get the weather
-            stream.data({ isThinking: false });
-
-            return {
-              location,
-              temperature: 72 + Math.floor(Math.random() * 21) - 10
-            };
-          }
-        });
         const { textStream } = streamText({
-          model: openai('gpt-4o-mini'),
+          model: openai("gpt-4o-mini"),
           system: SYSTEM_PROMPT,
-          messages: conversations[conversation_id], // The user message has already been added to the conversation array earlier, so the LLM will be responding to that.
-          tools: { weather },
-          toolChoice: 'auto',
-          stopWhen: stepCountIs(10),
+          messages: convertToModelMessages(conversations[conversation_id]),
           onFinish: async ({ response }) => {
-            // The assistant has finished generating the full response text. Now we update our conversation history with the additional messages generated. For a simple LLM generated single agent response, there will be one additional message. If you add some tools, and allow multi-step agent mode, there could be multiple additional messages which all need to be added to the conversation history.
+            const generatedMessages: LayercodeUIMessage[] = response.messages
+              .filter(
+                (message): message is AssistantModelMessage =>
+                  message.role === "assistant"
+              )
+              .map((message) => ({
+                id: crypto.randomUUID(),
+                role: "assistant", // now the type matches your UI message union
+                metadata: { conversation_id },
+                parts: Array.isArray(message.content)
+                  ? message.content
+                      .filter(
+                        (part): part is { type: "text"; text: string } =>
+                          part.type === "text"
+                      )
+                      .map((part) => ({ type: "text", text: part.text }))
+                  : [{ type: "text", text: message.content }],
+              }));
 
-            // First, we remove the placeholder assistant message we added earlier, as we will be replacing it with the actual generated messages.
-            conversations[conversation_id].splice(assistantResposneIdx - 1, 1);
-
-            // Push the new messages returned from the LLM into the conversation history, adding the Layercode turn_id to each message.
-            conversations[conversation_id].push(...response.messages.map((m) => ({ ...m, turn_id })));
-
-            console.log('--- final message history ---');
-            prettyPrintMsgs(conversations[conversation_id]);
-
-            stream.end(); // Tell Layercode we are done responding
-          }
+            conversations[conversation_id].push(...generatedMessages);
+            stream.end();
+          },
         });
 
-        // Stream the text response as it is generated, and have it spoken in real-time
         await stream.ttsTextStream(textStream);
       });
-    case 'session.end':
-      // The session/call has ended. Here you could store or analyze the conversation transcript (stored in your conversations history)
-      return new Response('OK', { status: 200 });
-    case 'session.update':
-      // The session/call state has been updated. This happens after the session has ended, and when the recording audio file has been processed and is available for download.
-      return new Response('OK', { status: 200 });
+
+    case "session.end":
+    case "session.update":
+      return new Response("OK", { status: 200 });
   }
 };
