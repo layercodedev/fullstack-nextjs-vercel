@@ -1,10 +1,16 @@
-"use client";
+'use client';
 
-import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { Mic, MicOff, PhoneCall, PhoneOff } from 'lucide-react';
+import dynamic from 'next/dynamic';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-type Role = "user" | "assistant" | "system";
-type TranscriptChunk = { counter: number; text: string };
+type Role = 'user' | 'assistant' | 'system';
+
+type TranscriptChunk = {
+  counter: number;
+  text: string;
+};
+
 type TurnChunkMap = Map<string, Map<number, string>>;
 
 type Message = {
@@ -14,206 +20,262 @@ type Message = {
   chunks?: TranscriptChunk[];
 };
 
+type AgentEvent = {
+  type?: string;
+  turn_id?: string | number;
+  delta_counter?: number | string;
+  content?: string;
+};
+
 const Page = dynamic(
   async () => {
-    const { useLayercodeAgent } = await import("@layercode/react-sdk");
+    const { useLayercodeAgent } = await import('@layercode/react-sdk');
 
     function VoiceAgentDemo() {
-      const agentId = process.env.NEXT_PUBLIC_LAYERCODE_AGENT_ID ?? "";
+      const agentId = process.env.NEXT_PUBLIC_LAYERCODE_AGENT_ID ?? '';
 
       const [messages, setMessages] = useState<Message[]>([]);
       const [isSessionActive, setIsSessionActive] = useState(false);
 
+      // Keeps track of partial user transcripts per turn
       const userChunksByTurn = useRef<TurnChunkMap>(new Map());
 
-      const { status, connect, disconnect, mute, unmute, isMuted } =
-        useLayercodeAgent({
-          agentId,
-          authorizeSessionEndpoint: "/api/authorize",
-          enableAmplitudeMonitoring: false,
+      const listRef = useRef<HTMLDivElement | null>(null);
 
-          onConnect: () => {
-            setIsSessionActive(true);
-            setMessages((prev) => [
-              ...prev,
-              { role: "system", text: "Connected" },
-            ]);
-          },
+      const appendSystemMessage = useCallback((text: string) => {
+        setMessages((prev) => [...prev, { role: 'system', text }]);
+      }, []);
 
-          onDisconnect: () => {
-            setIsSessionActive(false);
-            userChunksByTurn.current.clear();
-            setMessages((prev) => [
-              ...prev,
-              { role: "system", text: "Disconnected" },
-            ]);
-          },
+      const upsertMessage = useCallback((next: Message, opts: { replace?: boolean } = {}) => {
+        setMessages((prev) => {
+          if (!next.turnId) return [...prev, next];
 
-          onMessage: (evt: any) => {
-            const type = evt?.type as string | undefined;
-            if (!type) return;
+          const index = prev.findIndex((msg) => msg.turnId === next.turnId && msg.role === next.role);
 
-            if (type === "turn.end" && evt.turn_id) {
-              userChunksByTurn.current.delete(String(evt.turn_id));
-              return;
-            }
+          if (index === -1) return [...prev, next];
 
-            if (
-              type === "user.transcript.delta" ||
-              type === "user.transcript.interim_delta"
-            ) {
-              handleUserTranscript(evt);
-              return;
-            }
+          const copy = prev.slice();
+          const current = copy[index];
 
-            if (type === "response.text") {
-              appendAssistantChunk(evt);
-              return;
-            }
-          },
+          copy[index] = {
+            ...current,
+            text: opts.replace ? next.text : current.text + next.text,
+            chunks: next.chunks ?? current.chunks
+          };
+
+          return copy;
         });
+      }, []);
 
+      const clearTurn = useCallback((turnId: string) => {
+        userChunksByTurn.current.delete(turnId);
+      }, []);
+
+      const updateUserTranscript = useCallback(
+        (event: AgentEvent) => {
+          const turnId = event.turn_id != null ? String(event.turn_id) : undefined;
+          const rawCounter = event.delta_counter;
+          const content = typeof event.content === 'string' ? event.content : '';
+
+          const counter = typeof rawCounter === 'number' ? rawCounter : rawCounter != null ? Number(rawCounter) : undefined;
+
+          // If we don't have a counter, just treat this as a whole message
+          if (!turnId || counter === undefined) {
+            if (turnId) clearTurn(turnId);
+
+            upsertMessage(
+              {
+                role: 'user',
+                turnId,
+                text: content,
+                chunks: []
+              },
+              { replace: true }
+            );
+
+            return;
+          }
+
+          const existingTurnMap = userChunksByTurn.current.get(turnId) ?? new Map<number, string>();
+
+          existingTurnMap.set(counter, content);
+          userChunksByTurn.current.set(turnId, existingTurnMap);
+
+          const chunks: TranscriptChunk[] = [...existingTurnMap.entries()].sort(([a], [b]) => a - b).map(([c, text]) => ({ counter: c, text }));
+
+          const aggregatedText = chunks.map((c) => c.text).join('');
+
+          upsertMessage(
+            {
+              role: 'user',
+              turnId,
+              text: aggregatedText,
+              chunks
+            },
+            { replace: true }
+          );
+        },
+        [clearTurn, upsertMessage]
+      );
+
+      const appendAssistantMessage = useCallback(
+        (event: AgentEvent) => {
+          const text = typeof event.content === 'string' ? event.content : '';
+
+          upsertMessage({
+            role: 'assistant',
+            turnId: event.turn_id != null ? String(event.turn_id) : undefined,
+            text
+          });
+        },
+        [upsertMessage]
+      );
+
+      const handleAgentMessage = useCallback(
+        (evt: AgentEvent) => {
+          const type = evt.type;
+          if (!type) return;
+
+          if (type === 'turn.end' && evt.turn_id != null) {
+            clearTurn(String(evt.turn_id));
+            return;
+          }
+
+          if (type === 'user.transcript.delta' || type === 'user.transcript.interim_delta') {
+            updateUserTranscript(evt);
+            return;
+          }
+
+          if (type === 'response.text') {
+            appendAssistantMessage(evt);
+          }
+        },
+        [appendAssistantMessage, clearTurn, updateUserTranscript]
+      );
+
+      const { status, connect, disconnect, mute, unmute, isMuted } = useLayercodeAgent({
+        agentId,
+        authorizeSessionEndpoint: '/api/authorize',
+        enableAmplitudeMonitoring: false,
+
+        onConnect: () => {
+          setIsSessionActive(true);
+          appendSystemMessage('Connected');
+        },
+
+        onDisconnect: () => {
+          setIsSessionActive(false);
+          userChunksByTurn.current.clear();
+          appendSystemMessage('Disconnected');
+        },
+
+        onMessage: handleAgentMessage
+      });
+
+      // Cleanup on unmount
       useEffect(() => {
         return () => {
           void disconnect();
         };
       }, [disconnect]);
 
-      const listRef = useRef<HTMLDivElement | null>(null);
+      // Auto-scroll to bottom when messages change
       useEffect(() => {
-        listRef.current?.scrollTo({
-          top: listRef.current.scrollHeight,
-          behavior: "smooth",
+        const el = listRef.current;
+        if (!el) return;
+
+        el.scrollTo({
+          top: el.scrollHeight,
+          behavior: 'smooth'
         });
       }, [messages]);
 
-      const canConnect = status !== "connecting" && status !== "connected";
-      const connectLabel = status === "connecting" ? "Connecting…" : "Connect";
+      const isConnecting = status === 'connecting';
+      const canConnect = !isSessionActive && !isConnecting;
+      const connectLabel = isConnecting ? 'Connecting…' : 'Connect';
 
-      async function handleConnect() {
+      const handleConnectClick = async () => {
         if (!canConnect) return;
+
         userChunksByTurn.current.clear();
         setMessages([]);
+
         try {
           await connect();
         } catch {
-          setMessages([{ role: "system", text: "Failed to connect" }]);
+          setMessages([{ role: 'system', text: 'Failed to connect' }]);
         }
-      }
+      };
 
-      function handleUserTranscript(m: any) {
-        const turnId = m.turn_id ? String(m.turn_id) : undefined;
-        const raw = m.delta_counter;
-        const counter =
-          typeof raw === "number" ? raw : raw != null ? Number(raw) : undefined;
-        const content = typeof m.content === "string" ? m.content : "";
+      const handleMicClick = () => {
+        if (!isSessionActive) return;
+        isMuted ? unmute() : mute();
+      };
 
-        if (!turnId || counter === undefined) {
-          if (turnId) userChunksByTurn.current.delete(turnId);
-          upsertMessage(
-            { role: "user", turnId, text: content, chunks: [] },
-            { replace: true }
-          );
-          return;
+      const getRoleLabel = (role: Role) => {
+        switch (role) {
+          case 'assistant':
+            return 'Agent';
+          case 'user':
+            return 'You';
+          default:
+            return 'System';
         }
-
-        const turnMap =
-          userChunksByTurn.current.get(turnId) ?? new Map<number, string>();
-        turnMap.set(counter, content);
-        userChunksByTurn.current.set(turnId, turnMap);
-
-        const chunks: TranscriptChunk[] = [...turnMap.entries()]
-          .sort((a, b) => a[0] - b[0])
-          .map(([c, text]) => ({ counter: c, text }));
-        const aggregated = chunks.map((c) => c.text).join("");
-
-        upsertMessage(
-          { role: "user", turnId, text: aggregated, chunks },
-          { replace: true }
-        );
-      }
-
-      function appendAssistantChunk(m: any) {
-        upsertMessage({
-          role: "assistant",
-          turnId: m.turn_id ? String(m.turn_id) : undefined,
-          text: typeof m.content === "string" ? m.content : "",
-        });
-      }
-
-      function upsertMessage(next: Message, opts: { replace?: boolean } = {}) {
-        setMessages((prev) => {
-          if (!next.turnId) return [...prev, next];
-          const i = prev.findIndex(
-            (e) => e.turnId === next.turnId && e.role === next.role
-          );
-          if (i === -1) return [...prev, next];
-
-          const copy = prev.slice();
-          const current = copy[i];
-          copy[i] = {
-            ...current,
-            text: opts.replace ? next.text : current.text + next.text,
-            chunks: next.chunks ?? current.chunks,
-          };
-          return copy;
-        });
-      }
+      };
 
       return (
-        <div className="mx-auto max-w-2xl p-6 space-y-4">
+        <div className="mx-auto max-w-2xl space-y-4 p-6">
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={handleConnect}
-              disabled={!canConnect}
-              className="rounded-md border border-neutral-700 px-4 py-2 text-white disabled:opacity-50"
+              onClick={isSessionActive ? disconnect : handleConnectClick}
+              disabled={isConnecting}
+              className="flex items-center gap-2 rounded-md border border-neutral-700 px-4 py-2 text-white disabled:opacity-50"
             >
-              {connectLabel}
+              {isSessionActive ? (
+                <>
+                  <PhoneOff className="h-4 w-4 text-rose-400" />
+                  <span>Disconnect</span>
+                </>
+              ) : (
+                <>
+                  <PhoneCall className="h-4 w-4 text-emerald-400" />
+                  <span>{connectLabel}</span>
+                </>
+              )}
             </button>
+
             <button
               type="button"
-              onClick={() => isSessionActive && disconnect()}
+              onClick={handleMicClick}
               disabled={!isSessionActive}
-              className="rounded-md border border-neutral-700 px-4 py-2 text-white disabled:opacity-50"
+              className="flex items-center gap-2 rounded-md border border-neutral-700 px-4 py-2 text-white disabled:opacity-50"
             >
-              Disconnect
-            </button>
-            <button
-              type="button"
-              onClick={() => (isMuted ? unmute() : mute())}
-              disabled={!isSessionActive}
-              className="rounded-md border border-neutral-700 px-4 py-2 text-white disabled:opacity-50"
-            >
-              {isMuted ? "Unmute mic" : "Mute mic"}
+              {isMuted ? (
+                <>
+                  <MicOff className="h-4 w-4 text-rose-400" />
+                  <span>Mic muted</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="h-4 w-4 text-emerald-400" />
+                  <span>Mic on</span>
+                </>
+              )}
             </button>
           </div>
 
           <div className="text-sm text-neutral-300">Status: {status}</div>
 
-          <div
-            ref={listRef}
-            className="h-72 w-full overflow-y-auto rounded-md border border-neutral-800 bg-neutral-950/40 p-3 text-sm"
-          >
+          <div ref={listRef} className="h-72 w-full overflow-y-auto rounded-md border border-neutral-800 bg-neutral-950/40 p-3 text-sm">
             {messages.length === 0 ? (
               <div className="text-neutral-500">No messages yet.</div>
             ) : (
-              messages.map((m, i) => (
-                <div key={i} className="mb-2">
-                  <span className="text-neutral-400">
-                    {m.role === "assistant"
-                      ? "Agent"
-                      : m.role === "user"
-                      ? "You"
-                      : "System"}
-                    :
-                  </span>{" "}
+              messages.map((message, index) => (
+                <div key={index} className="mb-2">
+                  <span className="text-neutral-400">{getRoleLabel(message.role)}:</span>{' '}
                   <span className="whitespace-pre-wrap text-neutral-100">
-                    {m.role === "user" && m.chunks?.length
-                      ? m.chunks.map((c) => (
-                          <span key={c.counter}>{c.text}</span>
-                        ))
-                      : m.text}
+                    {message.role === 'user' && message.chunks?.length ? message.chunks.map((chunk) => <span key={chunk.counter}>{chunk.text}</span>) : message.text}
                   </span>
                 </div>
               ))
