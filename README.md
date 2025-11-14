@@ -1,46 +1,68 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Layercode × Next.js Example
 
-## Getting Started
+This app demonstrates how to wire a Layercode real-time agent into a modern Next.js project. It showcases:
 
-First, run the development server:
+- Microphone selection powered by the shared `MicrophoneSelect` component.
+- Speaking indicators that react to `userSpeaking` / `agentSpeaking`.
+- Streaming transcripts rendered live with partial user-turn updates.
+- Server-side message history stored in Vercel KV (with an automatic in-memory fallback for local dev).
+
+## Prerequisites
+
+- Node.js 18+ and npm.
+- A Layercode agent plus API key + webhook secret.
+- OpenAI (and optionally Google Generative AI) API keys for tool calls.
+- A Vercel KV database if you want persistent message history in production.
+
+By default the example pulls `@layercode/react-sdk` from npm. If you need to work against a local checkout, update `package.json` to point the dependency at your sibling `layercode-react-sdk` folder instead.
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd fullstack-nextjs-vercel
+npm install
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Fill in `.env.local` with the keys listed below, then run `npm run dev` to start the local server on http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Description |
+| --- | --- |
+| `NEXT_PUBLIC_LAYERCODE_AGENT_ID` | The agent to connect to from the browser (safe to expose). |
+| `LAYERCODE_API_KEY` | Used by `/api/authorize` to request websocket credentials. |
+| `LAYERCODE_WEBHOOK_SECRET` | Used to verify webhook calls hitting `/api/agent`. |
+| `OPENAI_API_KEY` | Required for the default `gpt-4o-mini` text generation. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Optional; only needed if your agent/tools rely on it. |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN`, `KV_REST_API_READ_ONLY_TOKEN`, `KV_URL` | Provided by Vercel KV. If omitted, the app falls back to an in-memory map that resets on every server restart (good enough for local testing). |
 
-## Learn More
+> Tip: keep `.env.local` out of version control; Next.js will load it automatically in dev.
 
-To learn more about Next.js, take a look at the following resources:
+## Message history storage
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`app/api/agent/route.ts` persists every user/assistant exchange. When `KV_*` env vars are present we use `@vercel/kv` with a 12‑hour TTL per conversation. If they are missing we log a warning and store messages in-memory so local testing still works.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Authorize route
 
-## Deploy on Vercel
+`app/api/authorize/route.ts` proxies the browser request to `https://api.layercode.com/v1/agents/web/authorize_session` using your `LAYERCODE_API_KEY`. Customize this handler if you want to run auth checks or tweak the request payload, but keep the API key server-side.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Running locally
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run dev    # starts Next.js with live reload
+```
 
-## IMPORTANT: When deploying to Vercel, you MUST disable Vercel Authentication to allow Layercode webhooks to be received
+The UI exposes connect/disconnect, mic mute, speaking indicators, and the reusable `<MicrophoneSelect>` component from the React SDK.
 
-By default, Vercel blocks external requests to your application /api routes. This means that Layercode webhooks will not be received by your application, and your voice agent will not work.
+## Deploying to Vercel
 
-Disable Vercel Authentication by going to your project settings in the Vercel dashboard, then go to "Deployment Protection" in left sidebar menu, then turn off "Vercel Authentication" and Save. You do not need to redeploy.
+1. Add all environment variables (including the KV ones) in your Vercel project settings.
+2. **Disable Vercel Authentication** so Layercode webhooks can reach `/api/agent`:
+   - Go to *Settings → Deployment Protection*.
+   - Turn off **Vercel Authentication** and save.
+3. Deploy as usual (`vercel deploy` or via Git).
 
 ![disable-vercel-auth](./disable-vercel-auth.png)
 
-Remember to check your Webhook Logs in the Layercode dashboard to ensure that webhooks are being received successfully. If you receive a 405 error response to webhooks, this indicates that Vercel Authentication is still enabled.
+You can monitor webhook deliveries in the Layercode dashboard to confirm everything is wired correctly.
