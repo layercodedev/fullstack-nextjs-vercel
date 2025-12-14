@@ -28,6 +28,15 @@ export const POST = async (request: Request) => {
     return NextResponse.json(await response.json());
   } catch (error: any) {
     console.log("Layercode authorize session response error:", error.message);
+
+    // Check if the error is an insufficient balance error
+    if (error.message && error.message.includes('insufficient_balance')) {
+      return NextResponse.json(
+        { error: 'insufficient_balance' },
+        { status: 402, statusText: 'insufficient_balance' }
+      );
+    }
+
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 };
