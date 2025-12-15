@@ -48,6 +48,7 @@ const Page = dynamic(
 
       const [messages, setMessages] = useState<Message[]>([]);
       const [isSessionActive, setIsSessionActive] = useState(false);
+      const [error, setError] = useState<string | null>(null);
       const userChunksByTurn = useRef<TurnChunkMap>(new Map());
       const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -166,6 +167,14 @@ const Page = dynamic(
           userChunksByTurn.current.clear();
           appendSystemMessage('Disconnected');
         },
+        onError: (err) => {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          if (errorMessage.includes('insufficient_balance') || errorMessage.includes('402')) {
+            setError('Your organization has insufficient funds. Please add funds to your Layercode account to continue.');
+          } else {
+            setMessages((prev) => [...prev, { role: 'system', text: `Error: ${errorMessage}` }]);
+          }
+        },
         onMessage: handleAgentMessage
       });
 
@@ -194,10 +203,12 @@ const Page = dynamic(
         if (!canConnect) return;
         userChunksByTurn.current.clear();
         setMessages([]);
+        setError(null);
         try {
           await connect();
-        } catch {
-          setMessages([{ role: 'system', text: 'Failed to connect' }]);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          setMessages([{ role: 'system', text: `Failed to connect: ${errorMessage}` }]);
         }
       };
 
@@ -219,6 +230,19 @@ const Page = dynamic(
 
       return (
         <div className="mx-auto max-w-3xl space-y-6 p-6">
+          {error && (
+            <div className="flex items-center justify-between rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              <span>{error}</span>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="ml-4 text-red-300 hover:text-red-100"
+                aria-label="Dismiss error"
+              >
+                &times;
+              </button>
+            </div>
+          )}
           <section className="space-y-6 rounded-xl border border-neutral-800 bg-black/30 p-5">
             <div className="flex flex-col gap-3 sm:flex-row">
               <button
