@@ -1,3 +1,32 @@
+// app/api/agent/route.ts
+//
+// Purpose
+// -------
+// Voice event webhook. Receives all voice session events from Layercode and
+// generates AI responses that are streamed back as speech.
+//
+// Responsibilities
+// ----------------
+// • Verify webhook signatures for security.
+// • Handle session lifecycle events (start, end, update).
+// • Process transcribed user speech and generate AI responses.
+// • Stream responses back to Layercode for text-to-speech.
+// • Manage conversation history in Vercel KV (or in-memory fallback).
+//
+// Voice Event Lifecycle
+// ---------------------
+// 1. session.start  → Voice session begins, reset conversation state.
+// 2. message        → User speech transcribed, generate AI response.
+// 3. session.update → Session state changes (mute/unmute).
+// 4. session.end    → Session terminated, cleanup opportunity.
+//
+// Extension Points
+// ----------------
+// • Persist transcripts: Save full conversation in session.end.
+// • Trigger summarization: Call LLM to summarize after session.end.
+// • Add analytics: Log latency, message count, session duration.
+// • Add moderation: Filter user input before LLM, filter output before TTS.
+//
 export const dynamic = 'force-dynamic';
 
 import { createOpenAI } from '@ai-sdk/openai';
@@ -5,6 +34,7 @@ import { streamText, UIMessage, convertToModelMessages, AssistantModelMessage } 
 import { streamResponse, verifySignature } from '@layercode/node-server-sdk';
 import { kv } from '@vercel/kv';
 import config from '@/layercode.config.json';
+import { getKnowledgeBase, formatKnowledgeForPrompt } from '@/lib/knowledge';
 
 type LayercodeMetadata = {
   conversation_id: string;
@@ -23,10 +53,17 @@ type WebhookRequest = {
   type: 'message' | 'session.start' | 'session.end' | 'session.update';
 };
 
-const SYSTEM_PROMPT = config.prompt;
+const knowledgeBase = formatKnowledgeForPrompt(getKnowledgeBase());
+const SYSTEM_PROMPT = `${config.prompt}\n\n${knowledgeBase}`;
 const WELCOME_MESSAGE = config.welcome_message;
 
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const getOpenAIClient = () => {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY environment variable is not set');
+  }
+  return createOpenAI({ apiKey });
+};
 
 const CONVERSATION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const isKvConfigured = Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
@@ -76,7 +113,12 @@ const resetConversationMessages = async (conversationId: string) => {
 
 export const POST = async (request: Request) => {
   const requestBody = (await request.json()) as WebhookRequest;
-  console.log('Webhook received from Layercode', requestBody);
+  console.log('Webhook received from Layercode', JSON.stringify({
+    type: requestBody.type,
+    conversation_id: requestBody.conversation_id,
+    turn_id: requestBody.turn_id,
+    timestamp: new Date().toISOString()
+  }));
 
   // Verify webhook signature
   const signature = request.headers.get('layercode-signature') || '';
@@ -90,6 +132,8 @@ export const POST = async (request: Request) => {
 
   const { conversation_id, text: userText, turn_id, type } = requestBody;
 
+  // SESSION START: Reset conversation state for a fresh session
+  // EXTENSION POINT: Initialize analytics tracking, log session start time
   if (type === 'session.start') {
     await resetConversationMessages(conversation_id);
   }
@@ -105,6 +149,8 @@ export const POST = async (request: Request) => {
   await appendConversationMessages(conversation_id, [userMessage]);
 
   switch (type) {
+    // VOICE EVENT: session.start - User has connected to voice session
+    // Delivers welcome message via TTS
     case 'session.start':
       const message: LayercodeUIMessage = {
         id: turn_id,
@@ -119,12 +165,16 @@ export const POST = async (request: Request) => {
         stream.end();
       });
 
+    // VOICE EVENT: message - User speech has been transcribed
+    // This is where the main conversation logic happens
+    // EXTENSION POINT: Add content moderation on userText before LLM call
     case 'message':
       return streamResponse(requestBody, async ({ stream }) => {
         const conversationForModel = [...existingMessages, userMessage];
+        // EXTENSION POINT: Log user message for analytics or moderation review
 
         const { textStream } = streamText({
-          model: openai('gpt-4o-mini'),
+          model: getOpenAIClient()('gpt-4.1-mini'),
           system: SYSTEM_PROMPT,
           messages: convertToModelMessages(conversationForModel),
           onFinish: async ({ response }) => {
@@ -140,6 +190,8 @@ export const POST = async (request: Request) => {
               }));
 
             await appendConversationMessages(conversation_id, generatedMessages);
+            // EXTENSION POINT: Filter/moderate assistant response before TTS
+            // EXTENSION POINT: Log assistant response for analytics
             stream.end();
           }
         });
@@ -147,8 +199,16 @@ export const POST = async (request: Request) => {
         await stream.ttsTextStream(textStream);
       });
 
+    // VOICE EVENT: session.end - User has disconnected from voice session
+    // EXTENSION POINT: Persist full transcript to database here
+    // EXTENSION POINT: Trigger async summarization of the conversation
+    // EXTENSION POINT: Log session duration, message count, and other metrics
     case 'session.end':
+    // VOICE EVENT: session.update - Session state changed (e.g., mute/unmute)
     case 'session.update':
       return new Response('OK', { status: 200 });
+
+    default:
+      return new Response('Unknown event type', { status: 400 });
   }
 };
