@@ -1,4 +1,4 @@
-# Layercode × Next.js Example
+# Layercode + Next.js Example
 
 This app demonstrates how to wire a Layercode real-time agent into a modern Next.js project. It showcases:
 
@@ -41,7 +41,7 @@ Fill in `.env.local` with the keys listed below, then run `npm run dev` to start
 
 ## Message history storage
 
-`app/api/agent/route.ts` persists every user/assistant exchange. When `KV_*` env vars are present we use `@vercel/kv` with a 12‑hour TTL per conversation. If they are missing we log a warning and store messages in-memory so local testing still works.
+`app/api/agent/route.ts` persists every user/assistant exchange. When `KV_*` env vars are present we use `@vercel/kv` with a 12-hour TTL per conversation. If they are missing we log a warning and store messages in-memory so local testing still works.
 
 ## Authorize route
 
@@ -59,7 +59,7 @@ The UI exposes connect/disconnect, mic mute, speaking indicators, and the reusab
 
 1. Add all environment variables (including the KV ones) in your Vercel project settings.
 2. **Disable Vercel Authentication** so Layercode webhooks can reach `/api/agent`:
-   - Go to *Settings → Deployment Protection*.
+   - Go to *Settings -> Deployment Protection*.
    - Turn off **Vercel Authentication** and save.
 3. Deploy as usual (`vercel deploy` or via Git).
 
@@ -67,5 +67,7 @@ The UI exposes connect/disconnect, mic mute, speaking indicators, and the reusab
 
 You can monitor webhook deliveries in the Layercode dashboard to confirm everything is wired correctly.
 
+---
 
-Layercode is now working on Toyo.ai
+## ✨ Our latest work
+[**Layercode is now building Toyo.ai**](https://toyo.ai)
